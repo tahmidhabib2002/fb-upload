@@ -29,7 +29,7 @@ app.use(passport.session());
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: "/api/auth/google/callback"
+    callbackURL: "https://app.chowdhurydental.com.bd/api/auth/google/callback" // এই পুরো লিঙ্কটি দিন, শুধু /api/... না।
   },
   (accessToken, refreshToken, profile, done) => {
     // ইমেইল চেক
@@ -102,13 +102,21 @@ app.get('/api/logs', ensureAuthenticated, async (req, res) => {
 app.use(express.static(path.join(__dirname, 'public')));
 
 // মেইন পেজে তালা লাগানো হলো
+// এই কোডটি আগের app.get('*') এর জায়গায় বসান
 app.get('*', (req, res) => {
+  // যদি ইউজার অলরেডি লগইন থাকে, তবে ড্যাশবোর্ড দেখাও
   if (req.isAuthenticated()) {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-  } else {
-    // লগইন না থাকলে গুগল লগইন পেজে পাঠিয়ে দেবে
-    res.redirect('/api/auth/google');
+    return res.sendFile(path.join(__dirname, 'public', 'index.html'));
   }
+  
+  // যদি ইউজার লগইন না থাকে, তবে তাকে লগইন করার একটি সিম্পল পেজ দেখাও
+  res.send(`
+    <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; font-family:sans-serif;">
+      <h2>Chowdhury Dental Dashboard</h2>
+      <p>নিরাপত্তার স্বার্থে আপনার গুগল অ্যাকাউন্ট দিয়ে লগইন করুন।</p>
+      <a href="/api/auth/google" style="padding:15px 30px; background:#4285F4; color:white; text-decoration:none; border-radius:5px; font-weight:bold;">Login with Google</a>
+    </div>
+  `);
 });
 
 app.listen(PORT, () => {
