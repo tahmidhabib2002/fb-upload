@@ -203,21 +203,26 @@ async function deleteVideoPost(postId, accessToken) {
   return res.data;
 }
 
-// ─────────────────────────────────────────────
 // EXCHANGE short-lived token → long-lived token
-// ─────────────────────────────────────────────
 async function exchangeForLongLivedToken(shortLivedToken) {
+  // আপনার Render-এর নাম অনুযায়ী ভেরিয়েবল ধরা হচ্ছে
+  const clientId = process.env.FB_APP_ID;
+  const clientSecret = process.env.FB_APP_SECRET;
+
+  if (!shortLivedToken) {
+    throw new Error("Short-lived token পাওয়া যায়নি!");
+  }
+
   const res = await axios.get('https://graph.facebook.com/oauth/access_token', {
     params: {
       grant_type: 'fb_exchange_token',
-      client_id: process.env.FB_APP_ID,
-      client_secret: process.env.FB_APP_SECRET,
-      fb_exchange_token: shortLivedToken
+      client_id: clientId,
+      client_secret: clientSecret,
+      fb_exchange_token: shortLivedToken // নিশ্চিত করুন এই ভেরিয়েবলটি এখানে আছে
     }
   });
-  return res.data; // { access_token, token_type, expires_in }
+  return res.data; 
 }
-
 // ─────────────────────────────────────────────
 // FETCH pages from a user token
 // ─────────────────────────────────────────────
