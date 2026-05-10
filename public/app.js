@@ -731,6 +731,10 @@ function escHtml(str) {
   updateSubmitSummary();
 })();
 
+// যদি সার্ভার ৪০১ (Unauthorized) পাঠায়, তবে লগইন স্ক্রিন দেখাবে
+if (response.status === 401) {
+    document.getElementById('loginOverlay').style.display = 'flex';
+}
 // Expose global functions that may be called from HTML
 window.selectAllPages = selectAllPages;
 window.deselectAllPages = deselectAllPages;
