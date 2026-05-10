@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FB Bulk Scheduler — Viral Clips BD</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ── SIDEBAR ─────────────────────────────────────── -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-icon">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="#00d4ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <span class="brand-name">FB SCHEDULER</span>
+  </div>
+
+  <nav class="sidebar-nav">
+    <button class="nav-item active" data-section="upload">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+      Bulk Upload
+    </button>
+    <button class="nav-item" data-section="logs">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      Upload Logs
+    </button>
+    <button class="nav-item" data-section="pages">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/></svg>
+      Pages
+    </button>
+    <button class="nav-item" data-section="connect">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      Connect Pages
+    </button>
+  </nav>
+
+  <div class="sidebar-queue-status" id="queueStatus">
+    <div class="qs-dot" id="qsDot"></div>
+    <span id="qsLabel">Queue idle</span>
+  </div>
+</aside>
+
+<!-- ── MOBILE HEADER ───────────────────────────────── -->
+<header class="mobile-header">
+  <button class="mobile-menu-btn" id="mobileMenuBtn">
+    <span></span><span></span><span></span>
+  </button>
+  <span class="mobile-brand">FB SCHEDULER</span>
+  <div class="mobile-queue-dot" id="mobileQsDot"></div>
+</header>
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+<!-- ── MAIN CONTENT ────────────────────────────────── -->
+<main class="main" id="mainContent">
+
+  <!-- ── SECTION: BULK UPLOAD ──────────────────────── -->
+  <section class="section active" id="section-upload">
+    <div class="section-header">
+      <h1 class="section-title">Bulk Video Upload</h1>
+      <p class="section-sub">Schedule up to 100 videos across multiple pages. Each video auto-expires in 7 days.</p>
+    </div>
+
+    <!-- Step 1: Select Pages -->
+    <div class="card" id="stepPages">
+      <div class="card-head">
+        <span class="step-badge">01</span>
+        <h2>Select Target Pages</h2>
+        <button class="btn-ghost btn-sm" id="refreshPagesBtn">Refresh</button>
+      </div>
+      <div class="pages-checklist" id="pagesChecklist">
+        <div class="empty-state">
+          <span>No pages connected yet.</span>
+          <button class="link-btn" data-goto="connect">Connect pages →</button>
+        </div>
+      </div>
+      <div class="page-select-actions" id="pageSelectActions" style="display:none">
+        <button class="btn-ghost btn-sm" id="selectAllPages">Select All</button>
+        <button class="btn-ghost btn-sm" id="deselectAllPages">Deselect All</button>
+        <span class="selected-count" id="selectedCount">0 selected</span>
+      </div>
+    </div>
+
+    <!-- Step 2: Drop Zone -->
+    <div class="card" id="stepDrop">
+      <div class="card-head">
+        <span class="step-badge">02</span>
+        <h2>Drop Videos</h2>
+        <span class="badge-neutral" id="fileCountBadge">0 files</span>
+      </div>
+      <div class="drop-zone" id="dropZone">
+        <div class="drop-inner">
+          <div class="drop-icon">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#00d4ff" stroke-width="1.5"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+          </div>
+          <p class="drop-label">Drag &amp; drop videos here</p>
+          <p class="drop-sub">MP4, MOV, AVI &bull; Up to 500MB each &bull; Max 100 files</p>
+          <label class="btn-primary btn-sm upload-label">
+            Browse Files
+            <input type="file" id="fileInput" accept="video/*" multiple hidden />
+          </label>
+        </div>
+      </div>
+      <div class="file-list-wrap" id="fileListWrap" style="display:none">
+        <div class="file-list-header">
+          <span>FILE</span><span>SIZE</span><span>TITLE OVERRIDE</span><span></span>
+        </div>
+        <div class="file-list" id="fileList"></div>
+      </div>
+    </div>
+
+    <!-- Step 3: Metadata & Scheduling -->
+    <div class="card" id="stepMeta">
+      <div class="card-head">
+        <span class="step-badge">03</span>
+        <h2>Metadata &amp; Schedule</h2>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-group form-full">
+          <label class="form-label">Master Title <span class="form-hint">(applies to all unless overridden)</span></label>
+          <input type="text" class="form-input" id="masterTitle" placeholder="Leave empty for no title" maxlength="255" />
+        </div>
+        <div class="form-group form-full">
+          <label class="form-label">Master Description</label>
+          <textarea class="form-input form-textarea" id="masterDesc" placeholder="Leave empty for no description" rows="3" maxlength="5000"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">
+            Start Date
+            <span class="form-hint">(BST — Video 1 posts on this date)</span>
+          </label>
+          <input type="date" class="form-input" id="startDate" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">
+            Fixed Post Time
+            <span class="form-hint">(Bangladesh Standard Time — UTC+6)</span>
+          </label>
+          <input type="time" class="form-input" id="postTime" value="21:00" />
+        </div>
+      </div>
+
+      <div class="schedule-preview" id="schedulePreview" style="display:none">
+        <div class="preview-header">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00d4ff" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Schedule Preview
+        </div>
+        <div class="preview-list" id="previewList"></div>
+      </div>
+    </div>
+
+    <!-- Step 4: Submit -->
+    <div class="card card-submit">
+      <div class="submit-info">
+        <div class="info-pill" id="infoPillVideos">0 videos</div>
+        <div class="info-sep">×</div>
+        <div class="info-pill" id="infoPillPages">0 pages</div>
+        <div class="info-sep">=</div>
+        <div class="info-pill info-pill-accent" id="infoPillTotal">0 total uploads</div>
+      </div>
+      <button class="btn-primary btn-lg" id="submitBtn" disabled>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+        Start Bulk Upload
+      </button>
+    </div>
+
+    <!-- Batch Progress Modal -->
+    <div class="progress-overlay" id="progressOverlay" style="display:none">
+      <div class="progress-modal">
+        <div class="progress-header">
+          <div class="progress-spinner"></div>
+          <span id="progressTitle">Uploading to Facebook...</span>
+        </div>
+        <div class="progress-bar-wrap">
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill" id="progressFill" style="width:0%"></div>
+          </div>
+          <span class="progress-pct" id="progressPct">0%</span>
+        </div>
+        <div class="progress-stats">
+          <span id="progressDone">0 done</span>
+          <span id="progressFailed">0 failed</span>
+          <span id="progressLeft">0 queued</span>
+        </div>
+        <p class="progress-note">Do not close this window. Large files may take several minutes per video.</p>
+        <button class="btn-ghost btn-sm" id="progressClose" style="display:none">Dismiss</button>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ── SECTION: UPLOAD LOGS ──────────────────────── -->
+  <section class="section" id="section-logs">
+    <div class="section-header">
+      <h1 class="section-title">Upload Logs</h1>
+      <div class="header-actions">
+        <select class="form-select" id="logStatusFilter">
+          <option value="">All statuses</option>
+          <option value="pending">Pending</option>
+          <option value="uploading">Uploading</option>
+          <option value="scheduled">Scheduled</option>
+          <option value="failed">Failed</option>
+          <option value="expired">Expired</option>
+        </select>
+        <button class="btn-ghost btn-sm" id="refreshLogsBtn">Refresh</button>
+      </div>
+    </div>
+
+    <div class="logs-stats" id="logsStats">
+      <div class="stat-pill">
+        <span class="stat-val" id="statTotal">—</span>
+        <span class="stat-key">Total</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-val stat-green" id="statScheduled">—</span>
+        <span class="stat-key">Scheduled</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-val stat-yellow" id="statPending">—</span>
+        <span class="stat-key">Pending</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-val stat-red" id="statFailed">—</span>
+        <span class="stat-key">Failed</span>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="data-table" id="logsTable">
+        <thead>
+          <tr>
+            <th>VIDEO TITLE</th>
+            <th>PAGE</th>
+            <th>SCHEDULED (BST)</th>
+            <th>EXPIRES (BST)</th>
+            <th>STATUS</th>
+            <th>ACTIONS</th>
+          </tr>
+        </thead>
+        <tbody id="logsBody">
+          <tr><td colspan="6" class="table-empty">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pagination" id="logsPagination"></div>
+  </section>
+
+  <!-- ── SECTION: PAGES ────────────────────────────── -->
+  <section class="section" id="section-pages">
+    <div class="section-header">
+      <h1 class="section-title">Connected Pages</h1>
+      <button class="btn-ghost btn-sm" id="refreshConnectedPagesBtn">Refresh</button>
+    </div>
+
+    <div class="pages-grid" id="connectedPagesGrid">
+      <div class="empty-state">Loading pages...</div>
+    </div>
+  </section>
+
+  <!-- ── SECTION: CONNECT ──────────────────────────── -->
+  <section class="section" id="section-connect">
+    <div class="section-header">
+      <h1 class="section-title">Connect Facebook Pages</h1>
+      <p class="section-sub">Paste a User Access Token obtained from your Facebook app to import all managed pages.</p>
+    </div>
+
+    <div class="card connect-card">
+      <div class="connect-steps">
+        <div class="cstep">
+          <div class="cstep-num">1</div>
+          <div class="cstep-body">
+            <strong>Open Graph API Explorer</strong>
+            <p>Go to <a href="https://developers.facebook.com/tools/explorer" target="_blank" class="ext-link">developers.facebook.com/tools/explorer</a></p>
+          </div>
+        </div>
+        <div class="cstep">
+          <div class="cstep-num">2</div>
+          <div class="cstep-body">
+            <strong>Select your App &amp; grant permissions</strong>
+            <p>Required permissions: <code>pages_manage_posts</code>, <code>pages_read_engagement</code>, <code>publish_video</code></p>
+          </div>
+        </div>
+        <div class="cstep">
+          <div class="cstep-num">3</div>
+          <div class="cstep-body">
+            <strong>Generate &amp; copy the User Access Token</strong>
+            <p>Click "Generate Access Token", copy the result below</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">User Access Token</label>
+        <textarea class="form-input form-textarea mono" id="userTokenInput" rows="3" placeholder="EAABwzLixnjY..."></textarea>
+      </div>
+
+      <div class="connect-actions">
+        <button class="btn-primary" id="connectBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          Connect &amp; Import Pages
+        </button>
+      </div>
+
+      <div class="connect-result" id="connectResult" style="display:none"></div>
+    </div>
+
+    <div class="card system-user-card">
+      <div class="card-head">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <h2>System User Token (Recommended)</h2>
+      </div>
+      <p class="card-body-text">For long-term stability, use a <strong>System User Token</strong> from Facebook Business Manager so your app doesn't lose access when your personal session expires.</p>
+      <ol class="steps-list">
+        <li>Go to <strong>Business Manager → System Users</strong></li>
+        <li>Create a System User with <em>Employee</em> role</li>
+        <li>Add your Pages to the System User with <em>Advertiser</em> or <em>Admin</em> access</li>
+        <li>Generate a System User token with the required permissions</li>
+        <li>Paste that token in the field above instead of a personal token</li>
+      </ol>
+    </div>
+  </section>
+
+</main>
+
+<!-- ── TOAST NOTIFICATIONS ──────────────────────────── -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
