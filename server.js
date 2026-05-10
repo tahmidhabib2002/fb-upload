@@ -38,7 +38,9 @@ app.use(passport.session());
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: process.env.GOOGLE_CALLBACK_URL || "http://localhost:3000/api/auth/google/callback"
+    callbackURL: process.env.NODE_ENV === 'production' 
+  ? "https://app.chowdhurydental.com.bd/api/auth/google/callback" 
+  : "http://localhost:3000/api/auth/google/callback"
   },
   (accessToken, refreshToken, profile, done) => {
     const userEmail = profile.emails[0].value;
@@ -64,17 +66,27 @@ app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 // Authentication guard middleware (with dev bypass)
 const ensureAuthenticated = (req, res, next) => {
-  if (DEV_BYPASS_AUTH) {
-    // লোকাল টেস্টিং-এ সবাই অথেন্টিকেটেড
-    req.isAuthenticated = () => true;
+  // ১. লোকাল হোস্ট চেক (যদি লোকালহোস্টে কাজ করেন তবে লগইন লাগবে না)
+  const isLocal = req.headers.host && (req.headers.host.includes('localhost') || req.headers.host.includes('127.0.0.1'));
+  
+  if (isLocal || (process.env.NODE_ENV === 'development' && process.env.BYPASS_AUTH === 'true')) {
     return next();
   }
-  if (req.isAuthenticated()) return next();
-  // If not logged in, show simple login page
+
+  // ২. অনলাইনে পাসপোর্ট লগইন চেক
+  if (req.isAuthenticated && req.isAuthenticated()) {
+    return next();
+  }
+
+  // ৩. যদি কোনোটিই না হয় তবে এরর বা লগইন পেজ
+  if (req.path.startsWith('/api/')) {
+    return res.status(401).json({ error: 'Unauthorized: Please login first.' });
+  }
+
   res.status(401).send(`
     <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; font-family:sans-serif; background:#0f172a; color:white;">
       <h2 style="color:#00d4ff;">CHOWDHURY DENTAL</h2>
-      <p>Please login with your Google account to access the video scheduler.</p>
+      <p>নিরাপত্তার স্বার্থে গুগল দিয়ে লগইন করুন।</p>
       <a href="/api/auth/google" style="padding:12px 25px; background:#4285F4; color:white; text-decoration:none; border-radius:5px; font-weight:bold; margin-top:10px;">Login with Google</a>
     </div>
   `);
@@ -147,30 +159,46 @@ app.get('/', (req, res) => {
 // ─────────────────────────────────────────────
 // ROUTES: Facebook OAuth / Token Exchange (Protected)
 // ─────────────────────────────────────────────
-app.post('/api/auth/connect', ensureAuthenticated, async (req, res) => {
-  const { userAccessToken } = req.body;
+app.post('/api/auth/connect', ensureAuthenticated, asyncHandler(async (req, res) => {
+  // আপনার ফ্রন্টএন্ড থেকে userToken অথবা userAccessToken যেটাই আসুক, এটা ধরবে
+  const shortLivedToken = req.body.userToken || req.body.userAccessToken;
+
+  if (!shortLivedToken) {
+    return res.status(400).json({ error: 'ফেসবুক টোকেন পাওয়া যায়নি! আবার ট্রাই করুন।' });
+  }
+
   try {
-    // প্রথমে লং-লিভড ইউজার টোকেন নিন
-    const longLivedUserToken = await queue.exchangeForLongLivedToken(userAccessToken);
-    // লং-লিভড টোকেন দিয়ে পেজ তালিকা আনুন (পেজ টোকেনও লং-লিভড হবে)
-    const pages = await queue.fetchUserPages(longLivedUserToken);
+    // ১. টোকেন এক্সচেঞ্জ (আপনার Render-এর FB_APP_ID ব্যবহার করে)
+    const longLived = await queue.exchangeForLongLivedToken(shortLivedToken);
     
+    // ২. পেজগুলো নিয়ে আসা
+    const pages = await queue.fetchUserPages(longLived.access_token);
+
+    if (!pages || pages.length === 0) {
+      return res.status(400).json({ error: 'এই টোকেনে কোনো পেজ খুঁজে পাওয়া যায়নি।' });
+    }
+
+    const savedPages = [];
     for (const page of pages) {
-      await db.savePage({
+      const saved = await db.savePage({
         page_id: page.id,
         page_name: page.name,
         access_token: page.access_token,
-        picture_url: page.picture?.data?.url,
-        category: page.category
+        picture_url: page.picture?.data?.url || null,
+        category: page.category || null
       });
+      savedPages.push({ id: saved.page_id, name: saved.page_name });
     }
-    res.json({ success: true, pages });
-  } catch (err) {
-    console.error('Connect error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
 
+    res.json({ success: true, pages: savedPages });
+
+  } catch (err) {
+    // ফেসবুক থেকে আসা আসল এরর মেসেজটি দেখাবে
+    const fbMsg = err.response?.data?.error?.message || err.message;
+    console.error("FB Connect Error:", fbMsg);
+    res.status(400).json({ error: fbMsg });
+  }
+}));
 // ─────────────────────────────────────────────
 // ROUTES: Pages (Protected)
 // ─────────────────────────────────────────────
