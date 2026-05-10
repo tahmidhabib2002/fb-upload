@@ -38,23 +38,28 @@ app.use(passport.session());
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: process.env.NODE_ENV === 'production' 
-  ? "https://app.chowdhurydental.com.bd/api/auth/google/callback" 
-  : "http://localhost:3000/api/auth/google/callback"
+    // ঝামেলা এড়াতে সরাসরি প্রডাকশন লিঙ্কটাই দিয়ে দিলাম
+    // যদি লোকাল হোস্টে কাজ করতে চান, তখন শুধু নিচের লাইনটা কমেন্ট করে লোকালটা অন করবেন
+    callbackURL: "https://app.chowdhurydental.com.bd/api/auth/google/callback"
   },
   (accessToken, refreshToken, profile, done) => {
-    const userEmail = profile.emails[0].value;
-    if (userEmail === process.env.ALLOWED_EMAIL) {
-      return done(null, profile);
-    } else {
-      return done(null, false);
+    try {
+      const userEmail = profile.emails[0].value;
+      // আপনার ইমেইল: tahmidhabib29@gmail.com
+      if (userEmail === process.env.ALLOWED_EMAIL) {
+        return done(null, profile);
+      } else {
+        // অনুমোদিত ইমেইল না হলে ব্লক
+        return done(null, false, { message: 'Unauthorized email' });
+      }
+    } catch (err) {
+      return done(err);
     }
   }
 ));
 
 passport.serializeUser((user, done) => done(null, user));
 passport.deserializeUser((user, done) => done(null, user));
-
 // ─────────────────────────────────────────────
 // MIDDLEWARE
 // ─────────────────────────────────────────────
@@ -66,27 +71,17 @@ app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 // Authentication guard middleware (with dev bypass)
 const ensureAuthenticated = (req, res, next) => {
-  // ১. লোকাল হোস্ট চেক (যদি লোকালহোস্টে কাজ করেন তবে লগইন লাগবে না)
-  const isLocal = req.headers.host && (req.headers.host.includes('localhost') || req.headers.host.includes('127.0.0.1'));
-  
-  if (isLocal || (process.env.NODE_ENV === 'development' && process.env.BYPASS_AUTH === 'true')) {
+  if (DEV_BYPASS_AUTH) {
+    // লোকাল টেস্টিং-এ সবাই অথেন্টিকেটেড
+    req.isAuthenticated = () => true;
     return next();
   }
-
-  // ২. অনলাইনে পাসপোর্ট লগইন চেক
-  if (req.isAuthenticated && req.isAuthenticated()) {
-    return next();
-  }
-
-  // ৩. যদি কোনোটিই না হয় তবে এরর বা লগইন পেজ
-  if (req.path.startsWith('/api/')) {
-    return res.status(401).json({ error: 'Unauthorized: Please login first.' });
-  }
-
+  if (req.isAuthenticated()) return next();
+  // If not logged in, show simple login page
   res.status(401).send(`
     <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; font-family:sans-serif; background:#0f172a; color:white;">
       <h2 style="color:#00d4ff;">CHOWDHURY DENTAL</h2>
-      <p>নিরাপত্তার স্বার্থে গুগল দিয়ে লগইন করুন।</p>
+      <p>Please login with your Google account to access the video scheduler.</p>
       <a href="/api/auth/google" style="padding:12px 25px; background:#4285F4; color:white; text-decoration:none; border-radius:5px; font-weight:bold; margin-top:10px;">Login with Google</a>
     </div>
   `);
