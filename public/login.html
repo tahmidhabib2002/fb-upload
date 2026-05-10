@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login — FB Bulk Scheduler</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+        'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+        sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .login-container {
+      width: 100%;
+      max-width: 400px;
+    }
+
+    .login-card {
+      background: rgba(30, 41, 59, 0.8);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 12px;
+      padding: 40px 30px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+
+    .login-header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+
+    .logo {
+      width: 50px;
+      height: 50px;
+      background: linear-gradient(135deg, #00d4ff 0%, #0084ff 100%);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 20px;
+      font-weight: 700;
+      color: white;
+      font-size: 24px;
+    }
+
+    .login-header h1 {
+      font-size: 28px;
+      color: #f1f5f9;
+      margin-bottom: 8px;
+      font-weight: 700;
+    }
+
+    .login-header p {
+      color: #94a3b8;
+      font-size: 14px;
+    }
+
+    .login-content {
+      margin-bottom: 30px;
+    }
+
+    .auth-method {
+      margin-bottom: 20px;
+    }
+
+    .auth-method-label {
+      display: block;
+      font-size: 13px;
+      color: #64748b;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-weight: 600;
+    }
+
+    .btn-google {
+      width: 100%;
+      padding: 12px 16px;
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 500;
+      color: #1e293b;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      transition: all 0.3s ease;
+    }
+
+    .btn-google:hover {
+      background: #f8fafc;
+      border-color: #cbd5e1;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+
+    .btn-google:active {
+      transform: translateY(0);
+    }
+
+    .google-icon {
+      width: 18px;
+      height: 18px;
+    }
+
+    .divider {
+      display: flex;
+      align-items: center;
+      margin: 30px 0;
+      color: #64748b;
+      font-size: 13px;
+    }
+
+    .divider-line {
+      flex: 1;
+      height: 1px;
+      background: rgba(148, 163, 184, 0.2);
+      margin: 0 12px;
+    }
+
+    .error-box {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 20px;
+      color: #fca5a5;
+      font-size: 13px;
+      display: none;
+    }
+
+    .error-box.show {
+      display: block;
+    }
+
+    .info-box {
+      background: rgba(59, 130, 246, 0.1);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 8px;
+      padding: 12px;
+      color: #93c5fd;
+      font-size: 13px;
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+
+    .info-box strong {
+      display: block;
+      margin-bottom: 4px;
+      color: #60a5fa;
+    }
+
+    .loading {
+      display: none;
+      text-align: center;
+      padding: 20px;
+      color: #94a3b8;
+      font-size: 14px;
+    }
+
+    .loading.show {
+      display: block;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(148, 163, 184, 0.3);
+      border-top-color: #00d4ff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .footer-text {
+      text-align: center;
+      color: #64748b;
+      font-size: 12px;
+      margin-top: 30px;
+      padding-top: 20px;
+      border-top: 1px solid rgba(148, 163, 184, 0.1);
+    }
+
+    .footer-text a {
+      color: #00d4ff;
+      text-decoration: none;
+      transition: color 0.3s ease;
+    }
+
+    .footer-text a:hover {
+      color: #0084ff;
+    }
+
+    @media (max-width: 480px) {
+      .login-card {
+        padding: 30px 20px;
+      }
+
+      .login-header h1 {
+        font-size: 24px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<div class="login-container">
+  <div class="login-card">
+    <div class="login-header">
+      <div class="logo">⚡</div>
+      <h1>FB Scheduler</h1>
+      <p>বাল্ক ভিডিও আপলোডার</p>
+    </div>
+
+    <div class="login-content">
+      <div class="info-box">
+        <strong>নিরাপদ প্রবেশ</strong>
+        এটি আপনার অ্যাকাউন্ট রক্ষার জন্য শুধুমাত্র অনুমোদিত ইমেইল দিয়ে লগইন করা যায়।
+      </div>
+
+      <div class="error-box" id="errorBox"></div>
+
+      <div class="auth-method">
+        <label class="auth-method-label">Google দিয়ে প্রবেশ করুন</label>
+        <a href="/api/auth/google" class="btn-google" id="googleBtn">
+          <svg class="google-icon" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+          </svg>
+          Google দিয়ে লগইন করুন
+        </a>
+      </div>
+
+      <div class="divider">
+        <div class="divider-line"></div>
+        <span>বা</span>
+        <div class="divider-line"></div>
+      </div>
+
+      <div class="loading" id="loadingState">
+        <span class="spinner"></span>
+        প্রবেশ করছি...
+      </div>
+    </div>
+
+    <div class="footer-text">
+      কোনো সমস্যা? <a href="mailto:support@example.com">সহায়তা যোগাযোগ করুন</a>
+    </div>
+  </div>
+</div>
+
+<script>
+  // চেক করুন যদি লগইন ব্যর্থ হয়
+  const urlParams = new URLSearchParams(window.location.search);
+  if (window.location.pathname === '/login-failed') {
+    const errorBox = document.getElementById('errorBox');
+    errorBox.innerHTML = '❌ লগইন ব্যর্থ হয়েছে। অনুমোদিত ইমেইল দিয়ে চেষ্টা করুন।';
+    errorBox.classList.add('show');
+  }
+
+  // লগইন ক্লিক হ্যান্ডলার
+  document.getElementById('googleBtn').addEventListener('click', function(e) {
+    document.getElementById('loadingState').classList.add('show');
+  });
+</script>
+
+</body>
+</html>
