@@ -12,53 +12,6 @@ const supabase = createClient(
 );
 
 // ─────────────────────────────────────────────
-// SCHEMA (run once in Supabase SQL editor)
-// ─────────────────────────────────────────────
-// CREATE TABLE pages (
-//   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-//   page_id TEXT NOT NULL UNIQUE,
-//   page_name TEXT NOT NULL,
-//   access_token TEXT NOT NULL,
-//   picture_url TEXT,
-//   category TEXT,
-//   created_at TIMESTAMPTZ DEFAULT NOW(),
-//   updated_at TIMESTAMPTZ DEFAULT NOW()
-// );
-//
-// CREATE TABLE upload_logs (
-//   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-//   post_id TEXT,
-//   video_id TEXT,
-//   video_title TEXT,
-//   page_id TEXT NOT NULL,
-//   page_name TEXT,
-//   scheduled_time TIMESTAMPTZ,
-//   expire_time TIMESTAMPTZ,
-//   status TEXT DEFAULT 'pending',   -- pending | uploading | scheduled | failed | expired
-//   error_message TEXT,
-//   file_name TEXT,
-//   file_size BIGINT,
-//   created_at TIMESTAMPTZ DEFAULT NOW(),
-//   updated_at TIMESTAMPTZ DEFAULT NOW()
-// );
-//
-// CREATE TABLE upload_sessions (
-//   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-//   session_key TEXT NOT NULL UNIQUE,
-//   page_id TEXT NOT NULL,
-//   video_title TEXT,
-//   description TEXT,
-//   scheduled_time TIMESTAMPTZ,
-//   expire_time TIMESTAMPTZ,
-//   fb_upload_session_id TEXT,
-//   fb_video_id TEXT,
-//   file_size BIGINT,
-//   bytes_transferred BIGINT DEFAULT 0,
-//   status TEXT DEFAULT 'init',
-//   created_at TIMESTAMPTZ DEFAULT NOW()
-// );
-
-// ─────────────────────────────────────────────
 // PAGES
 // ─────────────────────────────────────────────
 
@@ -125,7 +78,8 @@ async function createUploadLog(logData) {
       expire_time: logData.expire_time,
       status: 'pending',
       file_name: logData.file_name,
-      file_size: logData.file_size
+      file_size: logData.file_size,
+      batch_id: logData.batch_id || null
     })
     .select()
     .single();
@@ -153,7 +107,7 @@ async function getUploadLogs({ page = 1, limit = 50, status, pageId } = {}) {
     .order('created_at', { ascending: false })
     .range((page - 1) * limit, page * limit - 1);
 
-  if (status) query = query.eq('status', status);
+  if (status && status !== 'all') query = query.eq('status', status);
   if (pageId) query = query.eq('page_id', pageId);
 
   const { data, error, count } = await query;
@@ -168,6 +122,30 @@ async function deleteUploadLog(id) {
     .eq('id', id);
 
   if (error) throw error;
+}
+
+async function getUploadStats() {
+  const { data, error } = await supabase
+    .from('upload_logs')
+    .select('status', { count: 'exact' });
+  
+  if (error) throw error;
+  
+  const stats = {
+    total: 0,
+    scheduled: 0,
+    pending: 0,
+    failed: 0
+  };
+  
+  data?.forEach(log => {
+    stats.total++;
+    if (log.status === 'scheduled') stats.scheduled++;
+    else if (log.status === 'pending') stats.pending++;
+    else if (log.status === 'failed') stats.failed++;
+  });
+  
+  return stats;
 }
 
 // ─────────────────────────────────────────────
@@ -211,6 +189,6 @@ async function getUploadSession(sessionKey) {
 module.exports = {
   supabase,
   savePage, getPages, getPage, deletePage,
-  createUploadLog, updateUploadLog, getUploadLogs, deleteUploadLog,
+  createUploadLog, updateUploadLog, getUploadLogs, deleteUploadLog, getUploadStats,
   createUploadSession, updateUploadSession, getUploadSession
 };
