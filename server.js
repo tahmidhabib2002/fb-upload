@@ -1,4 +1,5 @@
 // server.js — Facebook Bulk Video Scheduler (Express Backend) with Google Authentication
+// FIXED: Schedule parsing, videoMeta handling, timezone correction
 
 require('dotenv').config();
 
@@ -28,10 +29,7 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'tahmid_secret_key_123',
   resave: false,
   saveUninitialized: false,
-  cookie: { 
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
-  }
+  cookie: { secure: false } // set true if using HTTPS
 }));
 
 app.use(passport.initialize());
@@ -43,25 +41,15 @@ passport.use(new GoogleStrategy({
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     callbackURL: process.env.GOOGLE_CALLBACK_URL || "https://app.chowdhurydental.com.bd/api/auth/google/callback"
   },
-  async (accessToken, refreshToken, profile, done) => {
+  (accessToken, refreshToken, profile, done) => {
     try {
       const userEmail = profile.emails[0].value;
-      const allowedEmail = process.env.ALLOWED_EMAIL;
-      
-      console.log(`[Auth] Login attempt from: ${userEmail}`);
-      
-      if (allowedEmail && userEmail === allowedEmail) {
-        console.log(`[Auth] Access granted for: ${userEmail}`);
-        return done(null, { ...profile, email: userEmail });
-      } else if (!allowedEmail) {
-        console.warn('[Auth] No ALLOWED_EMAIL set in .env - allowing all users temporarily');
-        return done(null, { ...profile, email: userEmail });
+      if (userEmail === process.env.ALLOWED_EMAIL) {
+        return done(null, profile);
       } else {
-        console.warn(`[Auth] Access denied for: ${userEmail}`);
         return done(null, false, { message: 'Unauthorized email' });
       }
     } catch (err) {
-      console.error('[Auth] Error:', err);
       return done(err);
     }
   }
@@ -73,35 +61,24 @@ passport.deserializeUser((user, done) => done(null, user));
 // ─────────────────────────────────────────────
 // MIDDLEWARE
 // ─────────────────────────────────────────────
-app.use(cors({
-  origin: process.env.NODE_ENV === 'production' ? 'https://app.chowdhurydental.com.bd' : 'http://localhost:3000',
-  credentials: true
-}));
-app.use(express.json({ limit: '500mb' }));
-app.use(express.urlencoded({ extended: true, limit: '500mb' }));
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 // Authentication guard middleware
 const ensureAuthenticated = (req, res, next) => {
   if (DEV_BYPASS_AUTH) {
-    req.user = { email: 'dev@test.com' };
     req.isAuthenticated = () => true;
     return next();
   }
-  if (req.isAuthenticated && req.isAuthenticated()) return next();
-  
-  // API requests return 401 JSON
-  if (req.path.startsWith('/api/')) {
-    return res.status(401).json({ error: 'Unauthorized - Please login', redirect: '/login' });
-  }
-  
-  // HTML requests show login page
+  if (req.isAuthenticated()) return next();
   res.status(401).send(`
-    <!DOCTYPE html>
-    <html>
-    <head><title>Login Required</title><meta http-equiv="refresh" content="0;url=/login"></head>
-    <body>Redirecting to login...</body>
-    </html>
+    <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; font-family:sans-serif; background:#0f172a; color:white;">
+      <h2 style="color:#00d4ff;">CHOWDHURY DENTAL</h2>
+      <p>Please login with your Google account to access the video scheduler.</p>
+      <a href="/api/auth/google" style="padding:12px 25px; background:#4285F4; color:white; text-decoration:none; border-radius:5px; font-weight:bold; margin-top:10px;">Login with Google</a>
+    </div>
   `);
 };
 
@@ -110,8 +87,7 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 500 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowed = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/avi', 'video/mpeg', 'video/webm'];
-    if (allowed.includes(file.mimetype) || file.mimetype.startsWith('video/')) {
+    if (file.mimetype.startsWith('video/')) {
       cb(null, true);
     } else {
       cb(new Error('Only video files are allowed'), false);
@@ -120,33 +96,57 @@ const upload = multer({
 });
 
 // ─────────────────────────────────────────────
-// UTILITY: BST timezone helpers (UTC+6)
+// UTILITY: Timezone helpers
 // ─────────────────────────────────────────────
+
+/**
+ * Convert BST (UTC+6) date + time string → UTC Date object
+ * e.g. bstToUtc("2025-06-15", "21:00") → Date in UTC (15:00 UTC)
+ */
 function bstToUtc(dateStr, timeStr) {
-  // Parse BST time (UTC+6)
   const [year, month, day] = dateStr.split('-').map(Number);
-  const [hours, minutes] = timeStr.split(':').map(Number);
-  
-  // Create date in local time (assuming system time is UTC)
-  const localDate = new Date(Date.UTC(year, month - 1, day, hours, minutes, 0, 0));
-  
-  // Convert BST (UTC+6) to UTC by subtracting 6 hours
-  const utcDate = new Date(localDate.getTime() - (6 * 60 * 60 * 1000));
-  
-  return utcDate;
+  const [h, m] = timeStr.split(':').map(Number);
+  // BST = UTC+6, so subtract 6 hours to get UTC
+  return new Date(Date.UTC(year, month - 1, day, h - 6, m, 0, 0));
+}
+
+/**
+ * Parse scheduled time from request.
+ * Accepts EITHER:
+ *   - scheduledTime: ISO string (from frontend's per-upload approach)
+ *   - startDate + postTime: BST date+time strings (for bulk batch mode)
+ * Returns UTC Date object.
+ */
+function parseScheduledTime(body, videoIndex = 0) {
+  // Mode 1: Direct ISO scheduledTime from frontend
+  if (body.scheduledTime) {
+    const d = new Date(body.scheduledTime);
+    if (isNaN(d.getTime())) {
+      throw new Error('Invalid scheduledTime ISO string: ' + body.scheduledTime);
+    }
+    return d;
+  }
+
+  // Mode 2: startDate + postTime in BST, with per-video day offset
+  if (body.startDate && body.postTime) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(body.startDate)) {
+      throw new Error('Invalid startDate format. Expected YYYY-MM-DD');
+    }
+    if (!/^\d{2}:\d{2}$/.test(body.postTime)) {
+      throw new Error('Invalid postTime format. Expected HH:MM');
+    }
+    const base = bstToUtc(body.startDate, body.postTime);
+    // Add videoIndex * 1 day for staggered scheduling
+    return new Date(base.getTime() + videoIndex * 24 * 60 * 60 * 1000);
+  }
+
+  throw new Error('scheduledTime (ISO) or startDate + postTime (BST) is required');
 }
 
 function addDaysToDate(date, days) {
   const d = new Date(date);
   d.setUTCDate(d.getUTCDate() + days);
   return d;
-}
-
-function formatBST(date) {
-  if (!date) return '';
-  const d = new Date(date);
-  const bst = new Date(d.getTime() + (6 * 60 * 60 * 1000));
-  return bst.toISOString().slice(0, 16).replace('T', ' ');
 }
 
 // ─────────────────────────────────────────────
@@ -160,30 +160,13 @@ const asyncHandler = fn => (req, res, next) =>
 // ─────────────────────────────────────────────
 app.get('/api/auth/google', passport.authenticate('google', { scope: ['email', 'profile'] }));
 
-app.get('/api/auth/google/callback', 
+app.get('/api/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/login-failed' }),
-  (req, res) => {
-    console.log('[Auth] Login successful, redirecting to /');
-    res.redirect('/');
-  }
+  (req, res) => res.redirect('/')
 );
 
-app.get('/api/auth/logout', (req, res) => {
-  req.logout((err) => {
-    if (err) console.error('[Auth] Logout error:', err);
-    res.redirect('/login');
-  });
-});
-
-app.get('/api/auth/status', (req, res) => {
-  res.json({ 
-    authenticated: DEV_BYPASS_AUTH ? true : (req.isAuthenticated ? req.isAuthenticated() : false),
-    user: req.user ? { email: req.user.email } : null
-  });
-});
-
 app.get('/login', (req, res) => {
-  if (req.isAuthenticated && req.isAuthenticated()) return res.redirect('/');
+  if (req.isAuthenticated()) return res.redirect('/');
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
@@ -192,9 +175,7 @@ app.get('/login-failed', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  if (req.isAuthenticated && req.isAuthenticated()) {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-  } else if (DEV_BYPASS_AUTH) {
+  if (req.isAuthenticated() || DEV_BYPASS_AUTH) {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
   } else {
     res.redirect('/login');
@@ -202,24 +183,21 @@ app.get('/', (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// ROUTES: Facebook OAuth / Token Exchange (Protected)
+// ROUTES: Facebook Token Connect (Protected)
 // ─────────────────────────────────────────────
 app.post('/api/auth/connect', ensureAuthenticated, asyncHandler(async (req, res) => {
   const shortLivedToken = req.body.userToken || req.body.userAccessToken;
 
   if (!shortLivedToken) {
-    return res.status(400).json({ error: 'ফেসবুক টোকেন পাওয়া যায়নি! আবার ট্রাই করুন।' });
+    return res.status(400).json({ error: 'ফেসবুক টোকেন পাওয়া যায়নি! আবার ট্রাই করুন।' });
   }
 
   try {
-    // ১. টোকেন এক্সচেঞ্জ
     const longLived = await queue.exchangeForLongLivedToken(shortLivedToken);
-    
-    // ২. পেজগুলো নিয়ে আসা
     const pages = await queue.fetchUserPages(longLived.access_token);
 
     if (!pages || pages.length === 0) {
-      return res.status(400).json({ error: 'এই টোকেনে কোনো পেজ খুঁজে পাওয়া যায়নি।' });
+      return res.status(400).json({ error: 'এই টোকেনে কোনো পেজ খুঁজে পাওয়া যায়নি।' });
     }
 
     const savedPages = [];
@@ -231,10 +209,14 @@ app.post('/api/auth/connect', ensureAuthenticated, asyncHandler(async (req, res)
         picture_url: page.picture?.data?.url || null,
         category: page.category || null
       });
-      savedPages.push({ id: saved.page_id, name: saved.page_name, picture: page.picture?.data?.url });
+      savedPages.push({ id: saved.page_id, name: saved.page_name });
     }
 
-    res.json({ success: true, pages: savedPages, message: `${savedPages.length} পেজ সফলভাবে সংযুক্ত হয়েছে` });
+    res.json({
+      success: true,
+      pages: savedPages,
+      message: `✓ ${savedPages.length}টি পেজ সফলভাবে সংযুক্ত হয়েছে!`
+    });
 
   } catch (err) {
     const fbMsg = err.response?.data?.error?.message || err.message;
@@ -265,79 +247,77 @@ app.post('/api/upload/bulk', ensureAuthenticated, upload.array('videos', 100), a
     return res.status(400).json({ error: 'No video files provided' });
   }
 
+  // Parse pageIds
   let pageIds, videoMeta;
   try {
     pageIds = JSON.parse(req.body.pageIds || '[]');
+  } catch {
+    return res.status(400).json({ error: 'Invalid JSON in pageIds' });
+  }
+
+  // Parse videoMeta (optional per-video metadata array)
+  try {
     videoMeta = JSON.parse(req.body.videoMeta || '[]');
-  } catch (err) {
-    console.error('Parse error:', err);
-    return res.status(400).json({ error: 'Invalid JSON in pageIds or videoMeta' });
+  } catch {
+    videoMeta = [];
   }
 
   if (!pageIds.length) {
     return res.status(400).json({ error: 'At least one page must be selected' });
   }
 
-  const { startDate, postTime, masterTitle, masterDescription } = req.body;
+  const { masterTitle, masterDescription } = req.body;
 
-  if (!startDate || !postTime) {
-    return res.status(400).json({ error: 'startDate and postTime are required' });
+  // ── CRITICAL FIX: Parse scheduled time properly ──
+  // Accepts scheduledTime (ISO) OR startDate+postTime (BST)
+  let firstScheduledUtc;
+  try {
+    firstScheduledUtc = parseScheduledTime(req.body, 0);
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
   }
 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{2}:\d{2}$/.test(postTime)) {
-    return res.status(400).json({ error: 'Invalid startDate or postTime format' });
-  }
-
-  const firstScheduledUtc = bstToUtc(startDate, postTime);
+  // Facebook requires scheduled time to be at least 10 minutes in the future
   const tenMinutesFromNow = new Date(Date.now() + 10 * 60 * 1000);
-  
   if (firstScheduledUtc < tenMinutesFromNow) {
-    return res.status(400).json({ 
-      error: `Scheduled time must be at least 10 minutes in the future. Current time (BST): ${formatBST(new Date())}, Selected: ${formatBST(firstScheduledUtc)}`
+    return res.status(400).json({
+      error: 'Scheduled time must be at least 10 minutes in the future (Facebook requirement). Please select a later time.'
     });
   }
 
-  // Get all selected pages
+  // Facebook also requires scheduled time to be no more than 6 months ahead
+  const sixMonthsFromNow = new Date(Date.now() + 6 * 30 * 24 * 60 * 60 * 1000);
+  if (firstScheduledUtc > sixMonthsFromNow) {
+    return res.status(400).json({
+      error: 'Scheduled time cannot be more than 6 months in the future (Facebook requirement).'
+    });
+  }
+
+  // Load page records from DB
   const pageRecords = [];
   for (const pid of pageIds) {
     try {
       const page = await db.getPage(pid);
-      if (!page) {
-        return res.status(400).json({ error: `Page ${pid} not found. Please reconnect it.` });
-      }
       pageRecords.push(page);
-    } catch (err) {
-      console.error(`Error fetching page ${pid}:`, err);
-      return res.status(400).json({ error: `Page ${pid} not found. Please reconnect it.` });
+    } catch {
+      return res.status(400).json({ error: `Page ${pid} not found in database. Please reconnect it.` });
     }
   }
 
   const batchId = uuidv4();
   const jobResults = [];
-  
-  // Track progress in memory
-  const batchProgress = {
-    total: files.length * pageRecords.length,
-    done: 0,
-    failed: 0,
-    status: 'running'
-  };
-  queue.activeJobs.set(batchId, batchProgress);
 
-  // For each video file
   for (let videoIndex = 0; videoIndex < files.length; videoIndex++) {
     const file = files[videoIndex];
     const perVideoMeta = videoMeta[videoIndex] || {};
     const title = perVideoMeta.title || masterTitle || '';
     const description = perVideoMeta.description || masterDescription || '';
-    
-    // Schedule this video at startDate + videoIndex days
-    const scheduledTime = addDaysToDate(firstScheduledUtc, videoIndex);
+
+    // Each video is scheduled 1 day apart from the first
+    const scheduledTime = new Date(firstScheduledUtc.getTime() + videoIndex * 24 * 60 * 60 * 1000);
     const expireTime = addDaysToDate(scheduledTime, 7);
 
-    // For each selected page
     for (const page of pageRecords) {
-      // Create log entry
       const logEntry = await db.createUploadLog({
         video_title: title || file.originalname,
         page_id: page.page_id,
@@ -345,11 +325,9 @@ app.post('/api/upload/bulk', ensureAuthenticated, upload.array('videos', 100), a
         scheduled_time: scheduledTime.toISOString(),
         expire_time: expireTime.toISOString(),
         file_name: file.originalname,
-        file_size: file.size,
-        batch_id: batchId
+        file_size: file.size
       });
 
-      // Enqueue upload job
       queue.enqueueUpload({
         jobId: uuidv4(),
         batchId,
@@ -380,7 +358,7 @@ app.post('/api/upload/bulk', ensureAuthenticated, upload.array('videos', 100), a
     batchId,
     totalJobs: jobResults.length,
     jobs: jobResults,
-    message: `${files.length} ভিডিও ${pageRecords.length} পেজে সিডিউল করা হয়েছে (মোট ${jobResults.length} টি আপলোড)`
+    message: `${files.length} video(s) queued for ${pageIds.length} page(s) = ${jobResults.length} total uploads`
   });
 }));
 
@@ -408,20 +386,7 @@ app.get('/api/logs', ensureAuthenticated, asyncHandler(async (req, res) => {
     status,
     pageId
   });
-  
-  // Also get stats
-  const stats = await db.getUploadStats();
-  
-  res.json({ 
-    logs: result.logs, 
-    total: result.total,
-    stats: {
-      total: result.total,
-      scheduled: stats?.scheduled || 0,
-      pending: stats?.pending || 0,
-      failed: stats?.failed || 0
-    }
-  });
+  res.json(result);
 }));
 
 app.delete('/api/logs/:id', ensureAuthenticated, asyncHandler(async (req, res) => {
@@ -454,15 +419,14 @@ app.post('/api/logs/:id/delete-post', ensureAuthenticated, asyncHandler(async (r
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '1.0.0',
+    version: '2.0.0',
     timestamp: new Date().toISOString(),
-    timezone: 'BST (UTC+6)',
-    currentTimeBST: formatBST(new Date())
+    queue: queue.getQueueStatus()
   });
 });
 
 // ─────────────────────────────────────────────
-// CATCH-ALL: serve frontend
+// CATCH-ALL: serve frontend (Protected)
 // ─────────────────────────────────────────────
 app.get('*', ensureAuthenticated, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -491,12 +455,11 @@ app.use((err, req, res, next) => {
 // ─────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`
-╔══════════════════════════════════════════════════════╗
-║     FB Bulk Video Scheduler with Google Auth         ║
-║     Server running at http://localhost:${PORT}         ║
-║     Dev bypass: ${DEV_BYPASS_AUTH ? 'ON (no login required)' : 'OFF'}                ║
-║     Current BST: ${formatBST(new Date())}              ║
-╚══════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════╗
+║   FB Bulk Video Scheduler — v2.0 FIXED       ║
+║   Server running at http://localhost:${PORT}    ║
+║   Dev bypass: ${DEV_BYPASS_AUTH ? 'ON (no login required)' : 'OFF'}          ║
+╚══════════════════════════════════════════════╝
   `);
 });
 
