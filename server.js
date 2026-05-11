@@ -11,7 +11,9 @@ const { v4: uuidv4 } = require('uuid');
 const session = require('express-session');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
-
+const fs = require('fs');
+const axios = require('axios'); // বা আপনি যেটা ব্যবহার করছেন
+const FormData = require('form-data');
 const db = require('./db');
 const queue = require('./queue');
 
@@ -82,10 +84,20 @@ const ensureAuthenticated = (req, res, next) => {
   `);
 };
 
-// Multer — store uploads in memory
+/// Multer — store uploads on disk to save RAM
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, '/tmp/'); // রেন্ডার সার্ভারের অস্থায়ী ফোল্ডার
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + '-' + file.originalname);
+  }
+});
+
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 500 * 1024 * 1024 },
+  storage: storage, // memoryStorage এর বদলে এখন storage
+  limits: { fileSize: 500 * 1024 * 1024 }, // ৫০০ এমবি লিমিট ঠিক থাকল
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('video/')) {
       cb(null, true);
@@ -94,7 +106,6 @@ const upload = multer({
     }
   }
 });
-
 // ─────────────────────────────────────────────
 // UTILITY: Timezone helpers
 // ─────────────────────────────────────────────
@@ -334,8 +345,8 @@ app.post('/api/upload/bulk', ensureAuthenticated, upload.array('videos', 100), a
         logId: logEntry.id,
         pageId: page.page_id,
         accessToken: page.access_token,
-        fileBuffer: file.buffer,
-        videoMeta: {
+        filePath: file.path,
+         videoMeta: {
           title,
           description,
           scheduledTime: scheduledTime.toISOString(),
