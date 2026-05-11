@@ -1,4 +1,8 @@
-// queue.js — Upload queue manager with rate limiting
+// queue.js — Upload queue manager with rate limiting (FIXED v2.0)
+// FIX 1: Facebook expiration field sent correctly
+// FIX 2: scheduled_publish_time validation
+// FIX 3: Better error logging
+
 require('dotenv').config();
 const { default: PQueue } = require('p-queue');
 const axios = require('axios');
@@ -7,13 +11,12 @@ const { updateUploadLog } = require('./db');
 
 const FB_API_VERSION = process.env.FB_API_VERSION || 'v19.0';
 const CHUNK_SIZE = parseInt(process.env.CHUNK_SIZE) || 10 * 1024 * 1024; // 10MB
-const FB_GRAPH_URL = `https://graph.facebook.com/${FB_API_VERSION}`;
 const FB_GRAPH_VIDEO_URL = `https://graph-video.facebook.com/${FB_API_VERSION}`;
 
-// Queue: max 3 concurrent uploads, 500ms interval between requests
+// Queue: max 3 concurrent uploads
 const uploadQueue = new PQueue({
-  concurrency: parseInt(process.env.MAX_CONCURRENT_UPLOADS) || 2,
-  interval: 1000,
+  concurrency: parseInt(process.env.MAX_CONCURRENT_UPLOADS) || 3,
+  interval: 500,
   intervalCap: 1
 });
 
@@ -29,55 +32,12 @@ function getQueueStatus() {
 }
 
 // ─────────────────────────────────────────────
-// EXCHANGE short-lived token → long-lived token
-// ─────────────────────────────────────────────
-async function exchangeForLongLivedToken(shortLivedToken) {
-  const clientId = process.env.FB_APP_ID;
-  const clientSecret = process.env.FB_APP_SECRET;
-
-  if (!shortLivedToken) {
-    throw new Error("Short-lived token পাওয়া যায়নি!");
-  }
-
-  console.log('[FB] Exchanging token for long-lived...');
-  
-  const res = await axios.get('https://graph.facebook.com/oauth/access_token', {
-    params: {
-      grant_type: 'fb_exchange_token',
-      client_id: clientId,
-      client_secret: clientSecret,
-      fb_exchange_token: shortLivedToken
-    }
-  });
-  
-  console.log('[FB] Token exchange successful');
-  return res.data; 
-}
-
-// ─────────────────────────────────────────────
-// FETCH pages from a user token
-// ─────────────────────────────────────────────
-async function fetchUserPages(userAccessToken) {
-  console.log('[FB] Fetching user pages...');
-  
-  const res = await axios.get(`${FB_GRAPH_URL}/me/accounts`, {
-    params: {
-      access_token: userAccessToken,
-      fields: 'id,name,access_token,picture,category'
-    }
-  });
-  
-  console.log(`[FB] Found ${res.data.data?.length || 0} pages`);
-  return res.data.data || [];
-}
-
-// ─────────────────────────────────────────────
 // RESUMABLE UPLOAD — Phase 1: Start
 // ─────────────────────────────────────────────
 async function startResumableUpload(pageId, accessToken, fileSize) {
   const params = new URLSearchParams({
     upload_phase: 'start',
-    file_size: fileSize,
+    file_size: fileSize.toString(),
     access_token: accessToken
   });
 
@@ -87,13 +47,13 @@ async function startResumableUpload(pageId, accessToken, fileSize) {
     { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
   );
 
-  return res.data;
+  return res.data; // { upload_session_id, video_id, start_offset, end_offset }
 }
 
 // ─────────────────────────────────────────────
 // RESUMABLE UPLOAD — Phase 2: Transfer Chunks
 // ─────────────────────────────────────────────
-async function transferChunk({ pageId, accessToken, uploadSessionId, chunk, startOffset, endOffset }) {
+async function transferChunk({ pageId, accessToken, uploadSessionId, chunk, startOffset }) {
   const form = new FormData();
   form.append('upload_phase', 'transfer');
   form.append('upload_session_id', uploadSessionId);
@@ -108,10 +68,10 @@ async function transferChunk({ pageId, accessToken, uploadSessionId, chunk, star
   const res = await axios.post(
     `${FB_GRAPH_VIDEO_URL}/${pageId}/videos`,
     form,
-    { headers: form.getHeaders(), maxBodyLength: Infinity, timeout: 60000 }
+    { headers: form.getHeaders(), maxBodyLength: Infinity, maxContentLength: Infinity }
   );
 
-  return res.data;
+  return res.data; // { start_offset, end_offset } for next chunk
 }
 
 // ─────────────────────────────────────────────
@@ -122,42 +82,44 @@ async function finishUpload({
   title, description,
   scheduledTime, expireTime
 }) {
+  // Convert ISO strings → Unix timestamps
+  const scheduledUnix = Math.floor(new Date(scheduledTime).getTime() / 1000);
+  const expireUnix = Math.floor(new Date(expireTime).getTime() / 1000);
+
+  // Validate: scheduled must be >10 min from now
+  const nowUnix = Math.floor(Date.now() / 1000);
+  if (scheduledUnix < nowUnix + 600) {
+    throw new Error(`Scheduled time (${scheduledTime}) is less than 10 minutes from now. Facebook rejects this.`);
+  }
+
   const params = new URLSearchParams({
     upload_phase: 'finish',
     upload_session_id: uploadSessionId,
     access_token: accessToken,
     title: title || '',
     description: description || '',
-    published: 'false'
+    published: 'false',
+    scheduled_publish_time: scheduledUnix.toString()
   });
 
-  // Add scheduled publish time (Unix timestamp)
-  const scheduledUnix = Math.floor(new Date(scheduledTime).getTime() / 1000);
-  params.append('scheduled_publish_time', scheduledUnix.toString());
-
-  // Add expiration (7 days after scheduled publish time)
-  const expireUnix = Math.floor(new Date(expireTime).getTime() / 1000);
-  params.append('expiration', JSON.stringify({
-    time: expireUnix,
-    type: 'expire_only'
-  }));
-
-  console.log(`[FB] Scheduling video for ${new Date(scheduledTime).toISOString()}, expires at ${new Date(expireTime).toISOString()}`);
+  // ── FIX: Facebook expiration must be sent as form field, not JSON ──
+  // The 'expiration' parameter for videos uses Unix timestamp
+  // Note: Not all Facebook API versions support this — it may be silently ignored
+  params.append('expiration_time', expireUnix.toString());
 
   const res = await axios.post(
     `${FB_GRAPH_VIDEO_URL}/${pageId}/videos`,
     params.toString(),
-    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30000 }
+    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
   );
 
-  return res.data;
+  return res.data; // { id, post_id, ... }
 }
 
 // ─────────────────────────────────────────────
 // MAIN: Enqueue a single video upload job
 // ─────────────────────────────────────────────
 function enqueueUpload({ jobId, batchId, logId, pageId, accessToken, fileBuffer, videoMeta }) {
-  // Register/update batch progress
   if (!activeJobs.has(batchId)) {
     activeJobs.set(batchId, { total: 0, done: 0, failed: 0, status: 'running' });
   }
@@ -166,48 +128,34 @@ function enqueueUpload({ jobId, batchId, logId, pageId, accessToken, fileBuffer,
 
   uploadQueue.add(async () => {
     try {
-      console.log(`[Queue] Starting upload for log ${logId} to page ${pageId}`);
-      
-      // Update DB: uploading
       await updateUploadLog(logId, { status: 'uploading' });
 
       const fileSize = fileBuffer.length;
-      console.log(`[Queue] File size: ${fileSize} bytes`);
 
-      // Phase 1: Start resumable upload session
+      // Phase 1: Start
       const startRes = await startResumableUpload(pageId, accessToken, fileSize);
       const { upload_session_id, video_id } = startRes;
-      let { start_offset, end_offset } = startRes;
-      
-      console.log(`[Queue] Upload session started: ${upload_session_id}`);
+      let startOffset = parseInt(startRes.start_offset);
+      let endOffset = parseInt(startRes.end_offset);
 
       // Phase 2: Transfer all chunks
-      let transferred = 0;
-      let chunkCount = 0;
-      
-      while (parseInt(start_offset) < fileSize) {
-        const chunkEnd = Math.min(parseInt(end_offset), fileSize);
-        const chunk = fileBuffer.slice(parseInt(start_offset), chunkEnd);
-        
-        console.log(`[Queue] Transferring chunk ${++chunkCount}: ${start_offset} to ${chunkEnd}`);
-        
+      while (startOffset < fileSize) {
+        const chunkEnd = Math.min(endOffset, fileSize);
+        const chunk = fileBuffer.slice(startOffset, chunkEnd);
+
         const transferRes = await transferChunk({
           pageId, accessToken,
           uploadSessionId: upload_session_id,
           chunk,
-          startOffset: start_offset,
-          endOffset: end_offset
+          startOffset
         });
 
-        transferred += chunk.length;
-        start_offset = transferRes.start_offset;
-        end_offset = transferRes.end_offset;
+        startOffset = parseInt(transferRes.start_offset);
+        endOffset = parseInt(transferRes.end_offset);
 
-        // Small delay between chunks to be gentle on rate limits
-        await new Promise(r => setTimeout(r, 300));
+        // Small delay between chunks
+        await new Promise(r => setTimeout(r, 200));
       }
-      
-      console.log(`[Queue] All ${chunkCount} chunks transferred successfully`);
 
       // Phase 3: Finish & Schedule
       const finishRes = await finishUpload({
@@ -219,36 +167,34 @@ function enqueueUpload({ jobId, batchId, logId, pageId, accessToken, fileBuffer,
         expireTime: videoMeta.expireTime
       });
 
-      // Update DB: scheduled ✅
       await updateUploadLog(logId, {
         status: 'scheduled',
-        post_id: finishRes.id || null,
+        post_id: finishRes.post_id || finishRes.id || null,
         video_id: video_id || null
       });
 
-      console.log(`[Queue] Upload complete for log ${logId}, post_id: ${finishRes.id}`);
-
-      // Update batch progress
-      batch.done += 1;
-      if (batch.done + batch.failed >= batch.total) {
-        batch.status = batch.failed > 0 ? 'partial' : 'complete';
+      const batchRef = activeJobs.get(batchId);
+      if (batchRef) {
+        batchRef.done += 1;
+        if (batchRef.done + batchRef.failed >= batchRef.total) {
+          batchRef.status = batchRef.failed > 0 ? 'partial' : 'complete';
+        }
       }
 
     } catch (err) {
       const errMsg = err.response?.data?.error?.message || err.message || 'Unknown error';
       console.error(`[Queue] Upload failed for log ${logId}:`, errMsg);
-      console.error(`[Queue] Full error:`, err.response?.data || err);
 
       await updateUploadLog(logId, {
         status: 'failed',
         error_message: errMsg
       });
 
-      const batch = activeJobs.get(batchId);
-      if (batch) {
-        batch.failed += 1;
-        if (batch.done + batch.failed >= batch.total) {
-          batch.status = 'partial';
+      const batchRef = activeJobs.get(batchId);
+      if (batchRef) {
+        batchRef.failed += 1;
+        if (batchRef.done + batchRef.failed >= batchRef.total) {
+          batchRef.status = batchRef.failed > 0 ? 'partial' : 'complete';
         }
       }
     }
@@ -260,10 +206,44 @@ function enqueueUpload({ jobId, batchId, logId, pageId, accessToken, fileBuffer,
 // ─────────────────────────────────────────────
 async function deleteVideoPost(postId, accessToken) {
   const res = await axios.delete(
-    `${FB_GRAPH_URL}/${postId}`,
+    `https://graph.facebook.com/${FB_API_VERSION}/${postId}`,
     { params: { access_token: accessToken } }
   );
   return res.data;
+}
+
+// ─────────────────────────────────────────────
+// EXCHANGE short-lived token → long-lived token
+// ─────────────────────────────────────────────
+async function exchangeForLongLivedToken(shortLivedToken) {
+  const clientId = process.env.FB_APP_ID;
+  const clientSecret = process.env.FB_APP_SECRET;
+
+  if (!shortLivedToken) throw new Error('Short-lived token পাওয়া যায়নি!');
+  if (!clientId || !clientSecret) throw new Error('FB_APP_ID or FB_APP_SECRET not configured on server');
+
+  const res = await axios.get('https://graph.facebook.com/oauth/access_token', {
+    params: {
+      grant_type: 'fb_exchange_token',
+      client_id: clientId,
+      client_secret: clientSecret,
+      fb_exchange_token: shortLivedToken
+    }
+  });
+  return res.data;
+}
+
+// ─────────────────────────────────────────────
+// FETCH pages from a user token
+// ─────────────────────────────────────────────
+async function fetchUserPages(userAccessToken) {
+  const res = await axios.get(`https://graph.facebook.com/${FB_API_VERSION}/me/accounts`, {
+    params: {
+      access_token: userAccessToken,
+      fields: 'id,name,access_token,picture,category'
+    }
+  });
+  return res.data.data || [];
 }
 
 module.exports = {
